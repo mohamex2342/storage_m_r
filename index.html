@@ -697,6 +697,16 @@
             color: #fff;
         }
 
+        .btn-open {
+            border-color: #0088cc;
+            color: #0088cc;
+        }
+
+        .btn-open:hover {
+            background: #0088cc;
+            color: #fff;
+        }
+
         .empty-state {
             text-align: center;
             padding: 60px 20px;
@@ -734,6 +744,8 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
+            flex-wrap: wrap;
+            gap: 10px;
         }
 
         .viewer-title {
@@ -747,6 +759,7 @@
         .viewer-actions {
             display: flex;
             gap: 10px;
+            flex-wrap: wrap;
         }
 
         .viewer-btn {
@@ -781,10 +794,22 @@
             color: #000;
         }
 
+        .viewer-btn-open {
+            background: rgba(0, 136, 204, 0.2);
+            color: #0088cc;
+            border: 1px solid #0088cc;
+        }
+
+        .viewer-btn-open:hover {
+            background: #0088cc;
+            color: #fff;
+        }
+
         .viewer-iframe-container {
             flex: 1;
             position: relative;
             background: #fff;
+            overflow: auto;
         }
 
         .viewer-iframe {
@@ -792,6 +817,56 @@
             height: 100%;
             border: none;
             background: #fff;
+            display: none;
+        }
+
+        .viewer-iframe.active {
+            display: block;
+        }
+
+        .viewer-fallback {
+            display: none;
+            padding: 40px;
+            text-align: center;
+            color: #333;
+        }
+
+        .viewer-fallback.active {
+            display: block;
+        }
+
+        .viewer-fallback-icon {
+            font-size: 4rem;
+            margin-bottom: 20px;
+        }
+
+        .viewer-fallback-text {
+            font-size: 1.2rem;
+            margin-bottom: 20px;
+            color: #666;
+        }
+
+        /* Code Preview for HTML */
+        .code-preview {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 20px;
+            border-radius: 10px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.85rem;
+            overflow-x: auto;
+            max-height: 400px;
+            overflow-y: auto;
+            text-align: left;
+            direction: ltr;
+            margin: 20px;
+            border: 1px solid #333;
+        }
+
+        .code-preview pre {
+            margin: 0;
+            white-space: pre-wrap;
+            word-wrap: break-word;
         }
 
         /* Share Modal */
@@ -1126,6 +1201,11 @@
             .share-buttons {
                 flex-direction: column;
             }
+
+            .code-preview {
+                margin: 10px;
+                font-size: 0.75rem;
+            }
         }
 
         @media (max-width: 480px) {
@@ -1166,6 +1246,9 @@
                 <span id="viewerFileName">عرض HTML</span>
             </div>
             <div class="viewer-actions">
+                <button class="viewer-btn viewer-btn-open" onclick="openHtmlInNewTab()">
+                    🚀 فتح في تبويب جديد
+                </button>
                 <button class="viewer-btn viewer-btn-share" onclick="shareCurrentHtml()">
                     🔗 مشاركة
                 </button>
@@ -1174,8 +1257,22 @@
                 </button>
             </div>
         </div>
-        <div class="viewer-iframe-container">
-            <iframe class="viewer-iframe" id="htmlViewer" sandbox="allow-scripts allow-same-origin allow-popups allow-forms allow-modals"></iframe>
+        <div class="viewer-iframe-container" id="viewerContainer">
+            <iframe class="viewer-iframe" id="htmlViewer" sandbox="allow-scripts allow-same-origin allow-popups allow-forms allow-modals allow-downloads"></iframe>
+            
+            <div class="viewer-fallback" id="viewerFallback">
+                <div class="viewer-fallback-icon">⚠️</div>
+                <div class="viewer-fallback-text">
+                    المتصفح يمنع عرض هذا الملف مباشرة (CORS)<br>
+                    يمكنك فتح الملف في تبويب جديد أو تحميله
+                </div>
+                <button class="viewer-btn viewer-btn-open" onclick="openHtmlInNewTab()" style="margin: 10px;">
+                    🚀 فتح في تبويب جديد
+                </button>
+                <div class="code-preview" id="codePreview" style="display: none;">
+                    <pre id="codeContent"></pre>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -1436,6 +1533,7 @@
         let selectedFile = null;
         let userFiles = [];
         let currentHtmlFile = null;
+        let htmlContentCache = null;
 
         // File Type Detection
         function getFileType(filename) {
@@ -1853,6 +1951,9 @@
                                     <button class="file-btn btn-run" onclick="runHtmlFile('${file.id}', '${escapeHtml(file.name)}')">
                                         ▶️ تشغيل
                                     </button>
+                                    <button class="file-btn btn-open" onclick="openHtmlInNewTabDirect('${file.telegramUrl}')">
+                                        🚀 فتح جديد
+                                    </button>
                                     <button class="file-btn btn-share" onclick="openShareModal('${file.id}', '${file.telegramUrl}', '${escapeHtml(file.name)}')">
                                         🔗 مشاركة
                                     </button>
@@ -1884,41 +1985,85 @@
             return div.innerHTML;
         }
 
-        // HTML Viewer Functions
+        // HTML Viewer Functions - الحل البديل لـ CORS
         async function runHtmlFile(fileId, fileName) {
             const file = userFiles.find(f => f.id === fileId);
             if (!file) return;
             
             currentHtmlFile = file;
+            htmlContentCache = null;
             
             showLoading();
             
             try {
-                // جلب محتوى الملف HTML
-                const response = await fetch(file.telegramUrl);
-                const htmlContent = await response.text();
+                // محاولة جلب المحتوى عبر AllOrigins Proxy (مجاني)
+                const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(file.telegramUrl)}`;
                 
-                // إنشاء Blob URL للعرض الآمن
+                const response = await fetch(proxyUrl, { 
+                    method: 'GET',
+                    headers: { 'Accept': 'text/html,application/xhtml+xml,application/xml' }
+                });
+                
+                if (!response.ok) throw new Error('Proxy failed');
+                
+                const htmlContent = await response.text();
+                htmlContentCache = htmlContent;
+                
+                // إنشاء Blob URL
                 const blob = new Blob([htmlContent], { type: 'text/html' });
                 const blobUrl = URL.createObjectURL(blob);
                 
-                document.getElementById('htmlViewer').src = blobUrl;
+                // عرض في الـ iframe
+                const iframe = document.getElementById('htmlViewer');
+                iframe.src = blobUrl;
+                iframe.classList.add('active');
+                
+                document.getElementById('viewerFallback').classList.remove('active');
                 document.getElementById('viewerFileName').textContent = 'عرض: ' + fileName;
                 document.getElementById('viewerModal').classList.add('active');
                 
-                showToast('جاري تحميل المعاينة...');
+                showToast('تم تحميل المعاينة بنجاح');
                 
             } catch (error) {
-                showToast('خطأ في تحميل الملف: ' + error.message, 'error');
+                // إذا فشل الـ Proxy، نعرض خيارات بديلة
+                console.error('CORS Error:', error);
+                
+                document.getElementById('htmlViewer').classList.remove('active');
+                document.getElementById('viewerFallback').classList.add('active');
+                document.getElementById('viewerFileName').textContent = 'عرض: ' + fileName;
+                document.getElementById('viewerModal').classList.add('active');
+                
+                showToast('تعذر التحميل المباشر. استخدم "فتح في تبويب جديد"', 'error');
             } finally {
                 hideLoading();
             }
         }
 
+        function openHtmlInNewTab() {
+            if (!currentHtmlFile) return;
+            
+            if (htmlContentCache) {
+                // فتح من الذاكرة المؤقتة
+                const blob = new Blob([htmlContentCache], { type: 'text/html' });
+                const url = URL.createObjectURL(blob);
+                window.open(url, '_blank');
+            } else {
+                // فتح الرابط المباشر
+                window.open(currentHtmlFile.telegramUrl, '_blank');
+            }
+        }
+
+        function openHtmlInNewTabDirect(url) {
+            window.open(url, '_blank');
+        }
+
         function closeViewer() {
             document.getElementById('viewerModal').classList.remove('active');
             document.getElementById('htmlViewer').src = 'about:blank';
+            document.getElementById('htmlViewer').classList.remove('active');
+            document.getElementById('viewerFallback').classList.remove('active');
             currentHtmlFile = null;
+            htmlContentCache = null;
         }
 
         // Share Functions
@@ -1928,10 +2073,7 @@
             
             currentHtmlFile = file;
             
-            // إنشاء رابط مشاركة مباشر (يمكن استبداله برابط موقعك الفعلي)
-            const shareUrl = `${window.location.origin}/view?id=${fileId}&user=${currentUser.uid}`;
-            
-            document.getElementById('shareLinkBox').textContent = fileUrl; // استخدام رابط Telegram مباشرة للتبسيط
+            document.getElementById('shareLinkBox').textContent = fileUrl;
             document.getElementById('shareModal').classList.add('active');
         }
 
@@ -1969,7 +2111,11 @@
         }
 
         function downloadFile(url) {
-            window.open(url, '_blank');
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = '';
+            a.target = '_blank';
+            a.click();
         }
 
         async function copyShortLink(longUrl) {
